@@ -1653,7 +1653,7 @@ public class Poops {
                 NativeInvoke.sendNotificationRequest("Already jailbroken");
                 Status.println("[+] Already jailbroken. Skipping Poops exploit.");
                 Status.println("[+] Closing disc player in 1 second...");
-                Thread.sleep(1000);
+                try { Thread.sleep(1000); } catch (Exception e) {}
                 sendElf("/ps5_killdiscplayer.elf");
                 return;
             }

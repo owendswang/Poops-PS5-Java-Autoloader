@@ -38,3 +38,9 @@ This project relies heavily on the research and open-source contributions of the
 2. Wait for the process to complete all 7 stages. Once finished, the Debug Settings will become visible, and the ELF loader will be active.
 3. Close the Blu-ray application.
 4. Send your final payload (e.g., an `.elf` file) to **port 9021**.
+
+## Support ☕
+
+If you found this project helpful and want to support my work, consider buying me a coffee!
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/TU_USUARIO_AQUI)

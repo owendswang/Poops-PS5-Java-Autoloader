@@ -7,6 +7,12 @@
 
 package org.homebrew;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+
 import org.bdj.api.*;
 import org.bdj.Status;
 
@@ -98,6 +104,7 @@ public class Poops {
     private static long sys_lseek, sys_mmap;
     private static long sys_jitshm_create, sys_jitshm_alias;
     private static long sys_sysctlbyname;
+    private static long sys_kill;
 
     
     // --- SHARED KERNEL VARIABLES ---
@@ -143,6 +150,7 @@ public class Poops {
             sys_jitshm_create = api.dlsym(libkernel, "sceKernelJitCreateSharedMemory");
             sys_jitshm_alias = api.dlsym(libkernel, "sceKernelJitCreateAliasOfSharedMemory");
             sys_sysctlbyname = api.dlsym(libkernel, "sysctlbyname");
+            sys_kill = api.dlsym(libkernel, "kill");
 
             return (sys_pipe != 0 && sys_socket != 0 && sys_netcontrol != 0 && sys_kqueue != 0);
         } catch (Exception e) {
@@ -381,7 +389,6 @@ public class Poops {
         private final WorkerState state;
         public IovThread(WorkerState state) { this.state = state; }
 
-        @Override
         public void run() {
             pinThread();
             try {
@@ -400,7 +407,6 @@ public class Poops {
         private final WorkerState state;
         public UioThread(WorkerState state) { this.state = state; }
 
-        @Override
         public void run() {
             pinThread(); 
             try {
@@ -1462,7 +1468,8 @@ public class Poops {
     // ==========================================
     public static void cleanupExploit(long fdOfiles) {
         int[] fds = {masterRfd, masterWfd, victimRfd, victimWfd};
-        for (int fd : fds) {
+        for (int i = 0; i < fds.length; i++) {
+            int fd = fds[i];
             long fp = kread64(fdOfiles + fd * FILEDESCENT_SIZE);
             if (fp != 0 && (fp >>> 48) == 0xFFFF) {
                 int rc = kread32(fp + 0x28); 
@@ -1513,7 +1520,8 @@ public class Poops {
 
     public static void cleanupForJarLoader(long fdOfiles) {
         int[] fds = {masterRfd, masterWfd, victimRfd, victimWfd, uio_sock_a, uio_sock_b, iov_sock_a, iov_sock_b};
-        for (int fd : fds) {
+        for (int i = 0; i < fds.length; i++) {
+            int fd = fds[i];
             if (fd >= 0) {
                 long fp = kread64(fdOfiles + fd * FILEDESCENT_SIZE);
                 if (fp != 0) {
@@ -1557,6 +1565,74 @@ public class Poops {
         return null;
     }
 
+    public static boolean canConnect(String host, int port, int timeoutMs) {
+        Socket socket = null;
+        try {
+            socket = new Socket();
+            socket.connect(new InetSocketAddress(host, port), timeoutMs);
+            return true;
+        } catch (IOException e) {
+            return false;
+        } finally {
+            if (socket != null) {
+                try {
+                    socket.close();
+                } catch (IOException e) {}
+            }
+        }
+    }
+
+    public static boolean isJailbroken() {
+        return canConnect("127.0.0.1", 9021, 500);
+    }
+
+    public static boolean sendElf(String elfPath) {
+        InputStream elfInput = null;
+        Socket elfldrSocket = null;
+        OutputStream socketOutput = null;
+
+        try {
+            elfInput = Poops.class.getResourceAsStream(elfPath);
+            if (elfInput == null) {
+                Status.println("[!] ps5_autoload.elf not found in payload.jar.");
+                return false;
+            }
+
+            Status.println("[*] Sending ps5_autoload.elf to 127.0.0.1:9021...");
+            elfldrSocket = new Socket();
+            elfldrSocket.connect(new InetSocketAddress("127.0.0.1", 9021), 500);
+            socketOutput = elfldrSocket.getOutputStream();
+
+            byte[] buffer = new byte[4096];
+            int bytesRead = 0;
+            while ((bytesRead = elfInput.read(buffer)) != -1) {
+                socketOutput.write(buffer, 0, bytesRead);
+            }
+            socketOutput.flush();
+            Status.println("[+] ps5_autoload.elf sent to 127.0.0.1:9021.");
+            return true;
+        } catch (IOException e) {
+            Status.printStackTrace("[!] Failed to send ps5_autoload.elf", e);
+            return false;
+        } finally {
+            if (socketOutput != null) {
+                try {
+                    socketOutput.close();
+                } catch (IOException e) {}
+            }
+            if (elfldrSocket != null) {
+                try {
+                    elfldrSocket.close();
+                } catch (IOException e) {}
+            }
+            if (elfInput != null) {
+                try {
+                    elfInput.close();
+                } catch (IOException e) {}
+            }
+        }
+    }
+
 // --- ENTRY POINT ---
     public static void main(String[] args) {
 
@@ -1570,6 +1646,15 @@ public class Poops {
             api = API.getInstance();
             if (!resolveSyscalls()) {
                 Status.println("[!] ERROR: Unresolved Syscalls. Aborting.");
+                return;
+            }
+
+            if (isJailbroken()) {
+                NativeInvoke.sendNotificationRequest("Already jailbroken");
+                Status.println("[+] Already jailbroken. Skipping Poops exploit.");
+                Status.println("[+] Closing disc player in 1 second...");
+                Thread.sleep(1000);
+                sendElf("/ps5_killdiscplayer.elf");
                 return;
             }
 
@@ -1718,7 +1803,6 @@ public class Poops {
                 if (triplets[1] != -1) {
                     triplets[2] = findTriplet(triplets[0], triplets[1], 5000, leakRthdr, rthdrSize, tagBuf, tagLen);
                 }
-                try { Thread.sleep(20); } catch (Exception e) {}
             }
 
             if (!corruptOk) {
@@ -1870,13 +1954,20 @@ public class Poops {
             Status.println("[+] ALL STAGES COMPLETED SUCCESSFULLY");
             Status.println("[+] Debug Settings visible");
             Status.println("[+] Port 9021 is OPEN and listening");
-            Status.println("[+] You can now close the app!");
+            // Status.println("[+] You can now close the app!");
             Status.println("[i] Made by: @Jaime_Cyber on Twitter");
             Status.println("=========================================");
-            
-            iovState.signalWork(-1); 
+
+            Status.println("[+] PS5 autoloader starting...");
+            sendElf("/ps5_autoload.elf");
+            Status.println("[+] Closing disc player...");
+            sendElf("/ps5_killdiscplayer.elf");
+            // System.exit(0);
+            // api.call(sys_kill, api.call(sys_getpid), 9);
+
+            iovState.signalWork(-1);
             uioState.signalWork(-1);
-            
+
             running = false;
 
             synchronized(iovState) { iovState.notifyAll(); }

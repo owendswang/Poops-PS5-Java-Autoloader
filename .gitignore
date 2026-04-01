@@ -1,6 +1,5 @@
-*~
 *.class
-discdir
-META-INF
-*.iso
-
+*.bak
+*.jar
+*.elf
+/build

@@ -22,7 +22,6 @@ typedef struct {
 int sceKernelSendNotificationRequest(int, notify_request_t *, size_t, int);
 
 static const char *k_autoload_dir = "ps5_autoloader";
-static const char *k_autoload_dir_alt = "ps5_lua_loader";
 static const char *k_autoload_config = "autoload.txt";
 static const int k_loader_port = 9021;
 
@@ -121,12 +120,6 @@ static bool is_blocked_loader_name(const char *name) {
     return strcmp(name, "elfldr.elf") == 0 || strcmp(name, "elfldr.bin") == 0;
 }
 
-static bool is_blocked_exploit_lua(const char *name) {
-    return strcmp(name, "umtx.lua") == 0 ||
-           strcmp(name, "lapse.lua") == 0 ||
-           strcmp(name, "poops_ps5.lua") == 0;
-}
-
 static bool send_file_to_loader(const char *path, int port) {
     int sockfd;
     struct sockaddr_in addr;
@@ -209,23 +202,13 @@ static bool find_autoload_base(char *out_dir, size_t out_size) {
             check_candidate_dir(candidate, out_dir, out_size)) {
             return true;
         }
-        if (snprintf(candidate, sizeof(candidate), "/mnt/usb%d/%s/", usb, k_autoload_dir_alt) < (int)sizeof(candidate) &&
-            check_candidate_dir(candidate, out_dir, out_size)) {
-            return true;
-        }
     }
 
     if (check_candidate_dir("/data/ps5_autoloader/", out_dir, out_size)) {
         return true;
     }
-    if (check_candidate_dir("/data/ps5_lua_loader/", out_dir, out_size)) {
-        return true;
-    }
 
     if (check_candidate_dir("/mnt/disc/ps5_autoloader/", out_dir, out_size)) {
-        return true;
-    }
-    if (check_candidate_dir("/mnt/disc/ps5_lua_loader/", out_dir, out_size)) {
         return true;
     }
 
@@ -297,19 +280,6 @@ static int process_config(const char *base_dir) {
                 fclose(fp);
                 return 1;
             }
-            continue;
-        }
-
-        if (ends_with(line, ".lua")) {
-            if (is_blocked_exploit_lua(line)) {
-                snprintf(msg, sizeof(msg), "[ERROR] Remove kernel exploit from autoload.txt:\n%s", line);
-                notify(msg);
-                fclose(fp);
-                return 1;
-            }
-
-            snprintf(msg, sizeof(msg), "[ERROR] Lua execution unsupported in C payload:\n%s", line);
-            notify(msg);
             continue;
         }
 

@@ -1,6 +1,8 @@
-# POOPS PS5 - BD-J Kernel Exploit & ELF Loader
+# POOPS PS5 Autoloader - BD-J Kernel Exploit & ELF Autoloader
 
-A complete Java port of the [`poops_ps5.lua`](https://github.com/Gezine/Luac0re/blob/main/payloads/poops_ps5.lua) IPv6 UAF kernel exploit originally developed by [Gezine](https://github.com/Gezine) and [egycnq](https://github.com/egycnq), based on the [`ExploitNetControlImpl`](https://gist.github.com/TheOfficialFloW/7174351201b5260d7780780f4059bebf) vulnerability discovered by [TheFlow](https://github.com/TheOfficialFloW). This project is designed to run natively within the PlayStation 5 BD-J (Blu-ray Java) environment. 
+It's [Poops-PS5-Java](https://github.com/jaigaresc/Poops-PS5-Java) chained with 'ps5_autoloader.elf' For implemented ISO, go check [BD-UN-JB-Poops-Autoloader](https://github.com/owendswang/BD-UN-JB-Poops-Autoloader).
+
+'Poops.java' is complete Java port of the [`poops_ps5.lua`](https://github.com/Gezine/Luac0re/blob/main/payloads/poops_ps5.lua) IPv6 UAF kernel exploit originally developed by [Gezine](https://github.com/Gezine) and [egycnq](https://github.com/egycnq), based on the [`ExploitNetControlImpl`](https://gist.github.com/TheOfficialFloW/7174351201b5260d7780780f4059bebf) vulnerability discovered by [TheFlow](https://github.com/TheOfficialFloW). This project is designed to run natively within the PlayStation 5 BD-J (Blu-ray Java) environment. 
 
 This payload chains a Netgraph/`sys_netcontrol` Use-After-Free (UAF) vulnerability, leveraging IPv6 routing headers for heap spraying, to achieve arbitrary kernel read/write, patches system credentials for root privileges, enables Debug Settings via a GPU DMA memory patch, and deploys an ELF loader.
 
@@ -10,6 +12,7 @@ This payload chains a Netgraph/`sys_netcontrol` Use-After-Free (UAF) vulnerabili
 * **Privilege Escalation:** Patches process credentials (`ucred`) to achieve root access.
 * **Debug Settings:** Uses GPU DMA to patch QA flags, target ID, and UTOKEN in protected kernel memory.
 * **ELF Loader:** Safely allocates and maps executable memory using shared memory aliasing (respecting FreeBSD W^X protections) and spawns a system thread listening on port 9021 for payload execution.
+* **Autoloader:** Auto send ELFs to elfldr from specific directories (Go check [ps5_autoloader](https://github.com/owendswang/BD-UN-JB-Poops-Autoloader/tree/main/ps5_autoloader)).
 
 ## Project History & Development
 
@@ -24,6 +27,9 @@ This project relies heavily on the research and open-source contributions of the
 * **[Gezine](https://github.com/Gezine) & [egycnq](https://github.com/egycnq):** For the original [`poops_ps5.lua`](https://github.com/Gezine/Luac0re/blob/main/payloads/poops_ps5.lua) script and the core implementation of the exploitation chain.
 * **[TheFlow (Andy Nguyen)](https://github.com/TheOfficialFloW):** For the discovery of the [`ExploitNetControlImpl`](https://gist.github.com/TheOfficialFloW/7174351201b5260d7780780f4059bebf) vulnerability and the original BD-J sandbox escape research.
 * **[SpecterDev (Cryptogenic)](https://github.com/Cryptogenic), [ChendoChap](https://github.com/ChendoChap), [John Törnblom](https://github.com/john-tornblom), and the [ps5-payload-dev](https://github.com/ps5-payload-dev) contributors:** For their foundational work on PS5 ELF loading, memory mapping, and the overall payload ecosystem.
+* **[jaigaresc](https://github.com/jaigaresc/Poops-PS5-Java):** Ported 'poops_ps5.lua' to Poops.java.
+* **[itsPLK](https://github.com/itsPLK/ps5_y2jb_autoloader):** Autoloader theory.
+* **[BenNoxXD](https://github.com/BenNoxXD/PS5-BDJ-HEN-loader):** Method to close disc player.
 * **Testers: A massive thank you to [DrYenyen](https://github.com/DrYenyen), [EchoStretch](https://github.com/EchoStretch), and [Viktorious-x](https://github.com/Viktorious-x), who generously volunteered their time and consoles to test and debug this payload despite not knowing me beforehand.**
 
 ## Requirements

@@ -50,3 +50,10 @@ This project relies heavily on the research and open-source contributions of the
 If you found this project helpful and want to support my work, consider buying me a coffee!
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/TU_USUARIO_AQUI)
+
+## Disclaimer
+
+This tool is provided as-is for research and development purposes only.  
+Use at your own risk.  
+The developers are not responsible for any damage, data loss, or other consequences resulting from the use of this software.  
+

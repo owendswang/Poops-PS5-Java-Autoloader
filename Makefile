@@ -18,8 +18,8 @@ all: $(JAR_NAME)
 $(JAR_NAME): $(SOURCES) Manifest.txt
 	$(JAVAC) $(JFLAGS) -cp $(CLASSPATH) $(SOURCES)
 	mkdir -p build
-	rsync -a --exclude='*.java' bin/ build/
-	rsync -a src/ build/
+	rsync -a bin/ build/
+	rsync -a --exclude='*.java' --exclude='*.bak' src/ build/
 	rsync -a ps5_autoload_elf/ps5_autoload.elf build/ps5_autoload.elf
 	rsync -a ps5_killdiscplayer_elf/ps5_killdiscplayer.elf build/ps5_killdiscplayer.elf
 	$(JAR) cfm $@ Manifest.txt -C build/ .

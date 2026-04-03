@@ -1,5 +1,6 @@
 *.class
 *.bak
 *.jar
-*.elf
 /build
+/ps5_autoload_elf/*.elf
+/ps5_killdiscplayer_elf/*.elf

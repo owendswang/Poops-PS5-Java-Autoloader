@@ -2,7 +2,7 @@
 
 A complete Java port of the [`poops_ps5.lua`](https://github.com/Gezine/Luac0re/blob/main/payloads/poops_ps5.lua) IPv6 UAF kernel exploit originally developed by [Gezine](https://github.com/Gezine) and [egycnq](https://github.com/egycnq), based on the [`ExploitNetControlImpl`](https://gist.github.com/TheOfficialFloW/7174351201b5260d7780780f4059bebf) vulnerability discovered by [TheFlow](https://github.com/TheOfficialFloW). This project is designed to run natively within the PlayStation 5 BD-J (Blu-ray Java) environment. 
 
-This payload chains a Use-After-Free (UAF) vulnerability to achieve arbitrary kernel read/write, patches system credentials for root privileges, enables Debug Settings via a GPU DMA memory patch, and deploys an ELF loader.
+This payload chains a Netgraph/`sys_netcontrol` Use-After-Free (UAF) vulnerability, leveraging IPv6 routing headers for heap spraying, to achieve arbitrary kernel read/write, patches system credentials for root privileges, enables Debug Settings via a GPU DMA memory patch, and deploys an ELF loader.
 
 ## Features
 
@@ -38,3 +38,9 @@ This project relies heavily on the research and open-source contributions of the
 2. Wait for the process to complete all 7 stages. Once finished, the Debug Settings will become visible, and the ELF loader will be active.
 3. Close the Blu-ray application.
 4. Send your final payload (e.g., an `.elf` file) to **port 9021**.
+
+## Support ☕
+
+If you found this project helpful and want to support my work, consider buying me a coffee!
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/TU_USUARIO_AQUI)

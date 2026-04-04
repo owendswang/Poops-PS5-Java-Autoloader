@@ -43,4 +43,4 @@ This project relies heavily on the research and open-source contributions of the
 
 If you found this project helpful and want to support my work, consider buying me a coffee!
 
-[![ko-fi](https://ko-fi.com/jaime_cyber)]
+[Ko-fi](https://ko-fi.com/jaime_cyber)

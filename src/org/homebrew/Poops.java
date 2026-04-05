@@ -1503,7 +1503,8 @@ public class Poops {
         }
 
         int[] criticalFds = {masterRfd, masterWfd, victimRfd, victimWfd};
-        for (int fd : criticalFds) {
+        for (int i = 0; i < criticalFds.length; i++) {
+            int fd = criticalFds[i];
             long fp = kread64(fdOfiles + fd * FILEDESCENT_SIZE);
             if (fp != 0 && (fp >>> 48) == 0xFFFF) {
                 int rc = kread32(fp + 0x28);
